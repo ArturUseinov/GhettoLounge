@@ -145,7 +145,7 @@ def save_session_data():
 def forcibly_stop_session(button_data):
     """Closes an occupied cabin forcibly and logs its session info."""
     if button_data["status"] == "occupied":
-        rate_per_hour = 70000 if "VIP" in button_data["text"] else 45000
+        rate_per_hour = 80000 if "VIP" in button_data["text"] else 50000
         end_time = time.time()
         elapsed_time = end_time - button_data["start_time"]
         hours = math.ceil(elapsed_time / 900) * 0.25
@@ -417,7 +417,7 @@ def open_room_popup(button_data):
     # popup.grab_set()
     # popup.focus_force()
 
-    rate_per_hour = 70000 if "VIP" in button_data["text"] else 45000
+    rate_per_hour = 80000 if "VIP" in button_data["text"] else 50000
 
     Label(
         popup,
