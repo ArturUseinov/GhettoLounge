@@ -4,6 +4,14 @@ from PIL import Image, ImageTk
 import time
 import math
 import json
+import socket
+from flask import Flask, render_template_string
+import threading
+from pyngrok import ngrok
+from pyngrok import conf 
+conf.get_default().auth_token = "AUTH_TOKEN"
+
+from datetime import datetime, timedelta
 
 # Initialize the main window
 window = Tk()
@@ -114,9 +122,158 @@ update_datetime()
 session_data = {}
 buttons = []
 
-###############################################################################
-# Saving and forcibly closing logic
-###############################################################################
+# Web portal status label
+web_status_label = Label(window, text="Web: OFF", fg="white", bg="red", font=("Arial", 12, "bold"))
+canvas.create_window(800, 110, anchor='nw', window=web_status_label)
+
+# Set up Flask app for remote monitoring
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+    rooms = []
+    for b in buttons:
+        room = {"name": b["text"], "status": b["status"]}
+        # Determine block color
+        if b["status"] == "vacant":
+            room["color"] = "#3AA655"
+        elif b["status"] == "occupied":
+            room["color"] = "#cf2400"
+        elif b["status"] == "reserved":
+            room["color"] = "#FFD700"
+        # Add details based on status
+        if b["status"] == "occupied":
+            start_time_str = time.strftime("%H:%M:%S", time.localtime(b["start_time"]))
+            elapsed_sec = time.time() - b["start_time"]
+            hours = int(elapsed_sec // 3600)
+            minutes = int((elapsed_sec % 3600) // 60)
+            room["start_time"] = start_time_str
+            room["elapsed"] = f"{hours} ч {minutes} мин"
+            rate = 80000 if "VIP" in b["text"] else 50000
+            cost = int(math.ceil(elapsed_sec / 900) * 0.25 * rate)
+            room["cost"] = cost
+            room["extra_services"] = b.get("extra_services", [])
+        elif b["status"] == "reserved":
+            room["reservation_time"] = b.get("reservation_time", "")
+            room["reservation_comment"] = b.get("reservation_comment", "")
+        rooms.append(room)
+    # Statistics for last 24 hours
+    total_sessions = 0
+    total_revenue = 0
+    try:
+        with open("Otchet.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        now = datetime.now()
+        sessions_list = []
+        for sessions in data.values():
+            for session in sessions:
+                date_str = session.get("Дата")
+                end_str = session.get("Время окончания")
+                if date_str and end_str:
+                    dt = datetime.strptime(f"{date_str} {end_str}", "%d/%m/%Y %H:%M:%S")
+                    if now - dt <= timedelta(hours=24):
+                        total_sessions += 1
+                        total_revenue += int(session.get("Итоговая_стоимость(сум)", 0))
+                        sessions_list.append(session)
+                        
+            sessions_list.sort(
+        key=lambda s: datetime.strptime(
+            f"{s['Дата']} {s['Время начала']}", "%d/%m/%Y %H:%M:%S"
+        )
+    )
+                        
+
+    except FileNotFoundError:
+        pass
+    stats = {"total_sessions": total_sessions, "total_revenue": total_revenue}
+    html = r"""<!DOCTYPE html>
+    <html>
+    <head>
+        <title>Ghetto Lounge Status</title>
+        <style>
+            body { background-color: black; color: white; font-family: Arial, sans-serif; }
+            .room-block { display: inline-block; width: 160px; margin: 10px; padding: 5px; color: white; vertical-align: top; border-radius: 8px; }
+            details { margin-top: 5px; }
+            details p, details li { color: black; }
+        </style>
+    </head>
+    <body>
+        <h1>Ghetto Lounge: Remote Monitoring</h1>
+        <div>
+            {% for room in rooms %}
+            <div class="room-block" style="background-color: {{ room.color }};">
+                <details>
+                    <summary style="font-weight: bold; cursor: pointer; {% if room.color == '#FFD700' %} color: black; {% endif %}">
+                        {{ room.name }} - {{ room.status.capitalize() }}
+                    </summary>
+                    {% if room.status == 'occupied' %}
+                    <p>Начало: {{ room.start_time }}</p>
+                    <p>Прошло: {{ room.elapsed }}</p>
+                    <p>Стоимость: {{ room.cost }} сум</p>
+                    {% if room.extra_services %}
+                    <p>Услуги:</p>
+                    <ul>
+                        {% for srv in room.extra_services %}
+                        <li>{{ srv["Услуга"] }} ({{ srv["Стоимость(сум)"] }} сум)</li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                    {% elif room.status == 'reserved' %}
+                    <p>Забронировано на: {{ room.reservation_time }}</p>
+                    <p>Комментарий: {{ room.reservation_comment }}</p>
+                    {% else %}
+                    <p>Свободно</p>
+                    {% endif %}
+                </details>
+            </div>
+            {% endfor %}
+        </div>
+        <hr />
+        <div>
+            <p>Статистика за последние 24 часов:</p>
+            <p>Всего сессий: {{ stats.total_sessions }}</p>
+            <p>Общая выручка: {{ stats.total_revenue }} сум</p>
+        </div>
+        <p>Сессии за последние 24 часа:</p>
+<table border="1">
+  <thead>
+    <tr>
+      <th>Кабинка</th><th>Время начала</th><th>Время окончания</th>
+      <th>Длительность (часов)</th><th>Стоимость_времени(сум)</th>
+      <th>Дополнительные услуги</th><th>Итоговая_стоимость(сум)</th>
+      <th>Дата</th><th>Комментарий</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for sess in sessions %}
+    <tr>
+      <td>{{ sess["Кабинка"] }}</td>
+      <td>{{ sess["Время начала"] }}</td>
+      <td>{{ sess["Время окончания"] }}</td>
+      <td>{{ sess["Длительность (часов)"] }}</td>
+      <td>{{ sess["Стоимость_времени(сум)"] }}</td>
+      <td>
+        {% if sess["Дополнительные услуги"] %}
+          <ul>
+          {% for srv in sess["Дополнительные услуги"] %}
+            <li>{{ srv["Услуга"] }} ({{ srv["Стоимость(сум)"] }} сум)</li>
+          {% endfor %}
+          </ul>
+        {% else %}
+          Нет
+        {% endif %}
+      </td>
+      <td>{{ sess["Итоговая_стоимость(сум)"] }}</td>
+      <td>{{ sess["Дата"] }}</td>
+      <td>{{ sess["Комментарий"] }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+    </body>
+    </html>"""
+    return render_template_string(html, rooms=rooms, stats=stats, sessions=sessions_list)
+
 def save_session_data():
     file_path = "Otchet.json"
     try:
@@ -127,17 +284,14 @@ def save_session_data():
         except (FileNotFoundError, json.JSONDecodeError):
             # If the file doesn't exist or is empty, start with an empty dictionary
             existing_data = {}
-
         # Merge sessions into existing_data
         for room, sessions in session_data.items():
             if room not in existing_data:
                 existing_data[room] = []
             existing_data[room].extend(sessions)
-
         # Save the updated data back to the file
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(existing_data, f, ensure_ascii=False, indent=4)
-
         messagebox.showinfo("Успех", "Данные успешно сохранены!")
     except Exception as e:
         messagebox.showerror("Ошибка", f"Не удалось сохранить данные.\n{e}")
@@ -180,7 +334,6 @@ def forcibly_stop_session(button_data):
         for key in ["reservation_time", "extra_services", "reservation_comment", "start_time"]:
             if key in button_data:
                 button_data.pop(key, None)
-
         canvas.itemconfig(button_data["id"], fill="#3AA655")
 
 def forcibly_close_all_rooms():
@@ -211,8 +364,7 @@ def add_extra_service(parent_window, button_data):
     service_name_entry = Entry(service_popup, textvariable=service_name_var, font=("Arial", 12))
     service_name_entry.pack(pady=5)
 
-    Label(service_popup, text="Стоимость (сум):\nПример: 100000 или 100,000 или 100.000",
-          fg="white", bg="#1C1C1C", font=("Arial", 10)).pack(pady=5)
+    Label(service_popup, text="Стоимость (сум):\nПример: 100000 или 100,000 или 100.000", fg="white", bg="#1C1C1C", font=("Arial", 10)).pack(pady=5)
 
     cost_var = StringVar()
     service_cost_entry = Entry(service_popup, textvariable=cost_var, font=("Arial", 12))
@@ -228,8 +380,7 @@ def add_extra_service(parent_window, button_data):
         # Remove commas/dots so that "100,000" -> "100000" or "100.000" -> "100000"
         cost_str = raw_cost.replace(",", "").replace(".", "")
         if not cost_str.isdigit():
-            messagebox.showwarning("Предупреждение", 
-                                   "Введите корректную стоимость (только цифры и возможные запятые/точки).")
+            messagebox.showwarning("Предупреждение", "Введите корректную стоимость (только цифры и возможные запятые/точки).")
             return
 
         cost = int(cost_str)
@@ -270,8 +421,7 @@ def remove_extra_service(parent_window, button_data):
     remove_popup.grab_set()
     remove_popup.focus_force()
 
-    Label(remove_popup, text="Выберите услугу для удаления:", 
-          fg="white", bg="#1C1C1C", font=("Arial", 12)).pack(pady=5)
+    Label(remove_popup, text="Выберите услугу для удаления:", fg="white", bg="#1C1C1C", font=("Arial", 12)).pack(pady=5)
 
     # Create a list of unique (name, cost) combos
     unique_services = []
@@ -302,7 +452,7 @@ def remove_extra_service(parent_window, button_data):
         new_length = len(button_data["extra_services"])
         removed_count = old_length - new_length
 
-        messagebox.showinfo("Информация", 
+        messagebox.showinfo("Информация",
                             f"Удалено {removed_count} записей услуги '{name}' (стоимость {cost}).")
         remove_popup.destroy()
 
@@ -333,8 +483,7 @@ def pick_reservation_time(parent_window, initial_time=None, initial_comment=""):
     time_popup.grab_set()
     time_popup.focus_force()
 
-    Label(time_popup, text="Выберите время (часы и минуты):", 
-          fg="white", bg="#1C1C1C", font=("Arial", 12)).pack(pady=5)
+    Label(time_popup, text="Выберите время (часы и минуты):", fg="white", bg="#1C1C1C", font=("Arial", 12)).pack(pady=5)
 
     # Parse initial_time if given
     if initial_time and ":" in initial_time:
@@ -362,8 +511,7 @@ def pick_reservation_time(parent_window, initial_time=None, initial_comment=""):
     Label(time_popup, text="——————————————", fg="white", bg="#1C1C1C", font=("Arial", 10)).pack(pady=0)
     Label(time_popup, text="", bg="#1C1C1C").pack(pady=5)
 
-    Label(time_popup, text="Комментарий к брони:", 
-          fg="white", bg="#1C1C1C", font=("Arial", 12)).pack(pady=0)
+    Label(time_popup, text="Комментарий к брони:", fg="white", bg="#1C1C1C", font=("Arial", 12)).pack(pady=0)
 
     comment_var = StringVar(value=initial_comment)
     comment_entry = Entry(time_popup, textvariable=comment_var, font=("Arial", 12), width=25)
@@ -405,99 +553,64 @@ def pick_reservation_time(parent_window, initial_time=None, initial_comment=""):
 ###############################################################################
 def open_room_popup(button_data):
     popup = Toplevel(window)
-    popup.geometry("400x600+275+275")
-    popup.configure(bg="#1C1C1C")
     popup.title(button_data["text"])
+    popup.configure(bg="#1C1C1C")
+    popup.geometry("400x600+275+275")
 
-    # Make it modal in style but typically we don't forcibly block main, 
-    # you can choose to .grab_set() if you want "true" modal. 
-    # (In the old stable code, we typically didn't grab_set for the main cabin popup.)
-    # If you'd like the old approach, uncomment the lines below:
-    # popup.transient(window)
-    # popup.grab_set()
-    # popup.focus_force()
+    rate = 80000 if "VIP" in button_data["text"] else 50000
 
-    rate_per_hour = 80000 if "VIP" in button_data["text"] else 50000
+    # Header
+    Label(popup, text=button_data["text"],
+          fg="white", bg="#1C1C1C", font=("Arial", 20, "bold")).pack(pady=8)
 
-    Label(
-        popup,
-        text=button_data["text"],
-        font=("Arial", 20, "bold"),
-        fg="white",
-        bg="#1C1C1C"
-    ).pack(pady=10)
+    # Live-info labels
+    session_time_label  = Label(popup, fg="white", bg="#1C1C1C", font=("Arial", 16))
+    time_only_label     = Label(popup, fg="white", bg="#1C1C1C", font=("Arial", 14))
+    current_cost_label  = Label(popup, fg="white", bg="#1C1C1C", font=("Arial", 16))
+    extra_services_label= Label(popup, fg="white", bg="#1C1C1C", font=("Arial", 12), justify="left")
+    reservation_comment = Label(popup, fg="white", bg="#1C1C1C", font=("Arial", 12))
+    for w in (session_time_label, time_only_label,
+              current_cost_label, extra_services_label, reservation_comment):
+        w.pack(pady=2)
 
-    session_time_label = Label(popup, text="", font=("Arial", 16), fg="white", bg="#1C1C1C")
-    session_time_label.pack(pady=5)
-
-    # New label to show "Стоимость времени" (time-only)
-    time_only_label = Label(popup, text="", font=("Arial", 14), fg="white", bg="#1C1C1C")
-    time_only_label.pack(pady=5)
-
-    # Existing label for total cost (time + extra services)
-    current_cost_label = Label(popup, text="", font=("Arial", 16), fg="white", bg="#1C1C1C")
-    current_cost_label.pack(pady=5)
-
-    extra_services_label = Label(popup, text="", font=("Arial", 14), fg="white", bg="#1C1C1C")
-    extra_services_label.pack(pady=5)
-
-    reservation_comment_label = Label(popup, text="", font=("Arial", 12), fg="white", bg="#1C1C1C")
-    reservation_comment_label.pack(pady=5)
-
-    def get_current_cost_and_services():
-        """Returns (total_cost, extra_services_string, time_only_cost)."""
-        if button_data["status"] == "occupied":
-            elapsed_time = time.time() - button_data["start_time"]
-            hours = math.ceil(elapsed_time / 900) * 0.25
-            cost_for_time = int(hours * rate_per_hour)
-
-            total_services_cost = 0
-            if "extra_services" in button_data and button_data["extra_services"]:
-                for srv in button_data["extra_services"]:
-                    total_services_cost += srv["Стоимость(сум)"]
-                lines = [f"- {s['Услуга']}: {s['Стоимость(сум)']} сум" for s in button_data["extra_services"]]
-                services_str = "\n".join(lines)
-            else:
-                services_str = "(Нет добавленных услуг)"
-
-            total_cost = cost_for_time + total_services_cost
-            return total_cost, services_str, cost_for_time
-        return (0, "", 0)
-
+    # Live-update loop
     def update_session_info():
-        """Continuously updates time/cost labels if the cabin is occupied."""
         if button_data["status"] == "occupied":
-            elapsed_time = time.time() - button_data["start_time"]
-            hours, rem = divmod(elapsed_time, 3600)
-            minutes, seconds = divmod(rem, 60)
-            session_time_label.config(text=f"Время с открытия: {int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}")
-
-            total_cost, services_str, time_only_cost = get_current_cost_and_services()
-            time_only_label.config(text=f"Стоимость времени: {time_only_cost} сум")
-            current_cost_label.config(text=f"Текущая Стоимость (итог): {total_cost} сум")
-            extra_services_label.config(text=f"Доп. услуги:\n{services_str}")
-            session_time_label.after(1000, update_session_info)
-
+            elapsed = time.time() - button_data["start_time"]
+            h, rem  = divmod(elapsed, 3600)
+            m, s    = divmod(rem, 60)
+            session_time_label.config(
+                text=f"Время с открытия: {int(h):02}:{int(m):02}:{int(s):02}")
+            quarter_hours = math.ceil(elapsed / 900) * 0.25
+            time_cost = int(quarter_hours * rate)
+            extras_cost = sum(srv["Стоимость(сум)"]
+                              for srv in button_data.get("extra_services", []))
+            current_cost_label.config(
+                text=f"Текущая стоимость (итого): {time_cost + extras_cost} сум")
+            time_only_label.config(text=f"Стоимость времени: {time_cost} сум")
+            if button_data.get("extra_services"):
+                extras = "\n".join(f"- {s['Услуга']}: {s['Стоимость(сум)']} сум"
+                                   for s in button_data["extra_services"])
+                extra_services_label.config(text=f"Доп. услуги:\n{extras}")
+            else:
+                extra_services_label.config(text="Доп. услуги: нет")
+            reservation_comment.config(text="")
         elif button_data["status"] == "reserved":
-            # Show reserved time
-            session_time_label.config(text=f"Зарезервировано на: {button_data['reservation_time']}")
+            session_time_label.config(
+                text=f"Зарезервировано на: {button_data.get('reservation_time','')}")
             time_only_label.config(text="Стоимость времени: 0 сум")
             current_cost_label.config(text="")
             extra_services_label.config(text="")
-            reservation_comment_label.config(
-                text=f"Комментарий: {button_data.get('reservation_comment', '')}"
-            )
-        else:
-            # vacant
+            reservation_comment.config(text=f"Комментарий: {button_data.get('reservation_comment','')}")
+        else:  # vacant
             session_time_label.config(text="Кабинка свободна")
-            time_only_label.config(text="Стоимость времени: 0 сум")
-            current_cost_label.config(text="")
-            extra_services_label.config(text="")
-            reservation_comment_label.config(text="")
+            for w in (time_only_label, current_cost_label,
+                      extra_services_label, reservation_comment):
+                w.config(text="")
+        # re-arm loop
+        popup.after(1000, update_session_info)
+    update_session_info()
 
-    ###########################################################################
-    # Button callbacks inside the cabin popup
-    ###########################################################################
     def start_session():
         if button_data["status"] == "occupied":
             messagebox.showwarning("Предупреждение", "Кабинка уже занята!")
@@ -508,66 +621,20 @@ def open_room_popup(button_data):
         canvas.itemconfig(button_data["id"], fill="#cf2400")
         popup.destroy()
 
-    def reserve_room():
-        if button_data["status"] == "occupied":
-            messagebox.showwarning("Предупреждение", "Кабинка уже занята!")
-            return
-
-        new_data = pick_reservation_time(
-            popup,
-            button_data.get("reservation_time"),
-            button_data.get("reservation_comment", "")
-        )
-        # new_data => [new_time, new_comment]
-        if new_data:
-            new_time, new_comment = new_data
-            button_data["status"] = "reserved"
-            button_data["reservation_time"] = new_time
-            button_data["reservation_comment"] = new_comment
-            canvas.itemconfig(button_data["id"], fill="#FFD700")
-            popup.destroy()
-
-    def edit_reservation():
-        if button_data["status"] != "reserved":
-            messagebox.showwarning("Предупреждение", "Кабинка не зарезервирована!")
-            return
-        new_data = pick_reservation_time(
-            popup,
-            button_data["reservation_time"],
-            button_data.get("reservation_comment", "")
-        )
-        if new_data:
-            new_time, new_comment = new_data
-            button_data["reservation_time"] = new_time
-            button_data["reservation_comment"] = new_comment
-            session_time_label.config(text=f"Зарезервировано на: {new_time}")
-            reservation_comment_label.config(text=f"Комментарий: {new_comment}")
-
-    def cancel_reservation():
-        if button_data["status"] != "reserved":
-            messagebox.showwarning("Предупреждение", "Кабинка не зарезервирована!")
-            return
-        button_data["status"] = "vacant"
-        for k in ["reservation_time", "reservation_comment"]:
-            if k in button_data:
-                button_data.pop(k, None)
-        canvas.itemconfig(button_data["id"], fill="#3AA655")
-        popup.destroy()
-
-    def stop_session():
+    def close_session():
         if button_data["status"] != "occupied":
             messagebox.showwarning("Предупреждение", "Кабинка не занята!")
             return
-
+        # Calculate costs and log
+        rate = 80000 if "VIP" in button_data["text"] else 50000
         end_time = time.time()
         elapsed_time = end_time - button_data["start_time"]
         hours = math.ceil(elapsed_time / 900) * 0.25
-        cost_for_time = int(hours * rate_per_hour)
+        cost_for_time = int(hours * rate)
         total_services_cost = 0
         if "extra_services" in button_data and button_data["extra_services"]:
             for srv in button_data["extra_services"]:
                 total_services_cost += srv["Стоимость(сум)"]
-
         total_cost = cost_for_time + total_services_cost
 
         session_info = {
@@ -581,25 +648,22 @@ def open_room_popup(button_data):
             "Дата": time.strftime("%d/%m/%Y", time.localtime(end_time)),
             "Комментарий": button_data.get("reservation_comment", "")
         }
-
-        # Store in session_data
         if button_data["text"] not in session_data:
             session_data[button_data["text"]] = []
         session_data[button_data["text"]].append(session_info)
 
-        # Reset cabin data
         button_data["status"] = "vacant"
+        for key in ["reservation_time", "extra_services", "reservation_comment", "start_time"]:
+            if key in button_data:
+                button_data.pop(key, None)
         canvas.itemconfig(button_data["id"], fill="#3AA655")
-        for k in ["extra_services", "reservation_time", "reservation_comment", "start_time"]:
-            if k in button_data:
-                button_data.pop(k, None)
-
         popup.destroy()
+
         # Save and clear session_data
         save_session_data()
         session_data.clear()
 
-        # Show billing
+        # Show billing summary
         billing_window = Toplevel(window)
         billing_window.title("Биллинг")
         billing_window.geometry("400x300")
@@ -672,64 +736,84 @@ def open_room_popup(button_data):
         by = (window.winfo_screenheight() // 2) - (bh // 2)
         billing_window.geometry(f"{bw}x{bh}+{bx}+{by}")
 
+    def reserve_session():
+        if button_data["status"] == "occupied":
+            messagebox.showwarning("Предупреждение", "Кабинка занята, бронирование невозможно.")
+            return
+        new_data = pick_reservation_time(popup,
+                                        button_data.get("reservation_time", ""),
+                                        button_data.get("reservation_comment", ""))
+        if new_data:
+            new_time, new_comment = new_data
+            button_data["status"] = "reserved"
+            button_data["reservation_time"] = new_time
+            button_data["reservation_comment"] = new_comment
+            canvas.itemconfig(button_data["id"], fill="#FFD700")
+            popup.destroy()
+
+    def cancel_reservation():
+        if button_data["status"] != "reserved":
+            messagebox.showwarning("Предупреждение", "Кабинка не зарезервирована!")
+            return
+        button_data["status"] = "vacant"
+        for k in ["reservation_time", "reservation_comment"]:
+            if k in button_data:
+                button_data.pop(k, None)
+        canvas.itemconfig(button_data["id"], fill="#3AA655")
+        popup.destroy()
+        
+    def change_reservation():
+        if button_data["status"] != "reserved":
+            messagebox.showwarning("Предупреждение", "Кабинка не зарезервирована!")
+            return
+
+        new_data = pick_reservation_time(
+            popup,
+            button_data.get("reservation_time", ""),
+            button_data.get("reservation_comment", "")
+        )
+        if new_data:
+            new_time, new_comment = new_data
+            button_data["reservation_time"] = new_time
+            button_data["reservation_comment"] = new_comment
+            # refresh labels in the still-open popup
+            session_time_label.config(text=f"Зарезервировано на: {new_time}")
+            reservation_comment.config(text=f"Комментарий: {new_comment}")
+            canvas.itemconfig(button_data["id"], fill="#FFD700")
+
     def go_back():
         popup.destroy()
 
-    ###########################################################################
     # Create the relevant buttons for each state
-    ###########################################################################
     if button_data["status"] == "vacant":
-        create_popup_button(popup, "Открыть кабинку", start_session, bg_color="#3AA655")
-        create_popup_button(popup, "Зарезервировать кабинку", reserve_room, bg_color="#FFA500")
-        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5")
-
+        create_popup_button(popup, "Открыть кабинку", start_session, bg_color="#3AA655", fg_color="#FFFFFF", width=200, height=50)
+        create_popup_button(popup, "Забронировать", reserve_session, bg_color="#FFD700", fg_color="#000000", width=200, height=50)
+        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5", width=200, height=50)
     elif button_data["status"] == "occupied":
-        create_popup_button(popup, "Закрыть кабинку", stop_session, bg_color="#cf2400")
-        create_popup_button(popup, "Добавить к заказу",
-                            lambda: add_extra_service(popup, button_data),
-                            bg_color="#3AA655")
-        if button_data.get("extra_services"):
-            create_popup_button(popup, "Убрать из заказа",
-                                lambda: remove_extra_service(popup, button_data),
-                                bg_color="#3AA655")
-        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5")
-
+        create_popup_button(popup, "Добавить услугу", lambda b=button_data: add_extra_service(popup, b), bg_color="#3AA655", width=200, height=50)
+        create_popup_button(popup, "Убрать услугу", lambda b=button_data: remove_extra_service(popup, b), bg_color="#cf2400", width=200, height=50)
+        create_popup_button(popup, "Закрыть кабинку", close_session, bg_color="#F725E5", width=200, height=50)
+        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5", width=200, height=50)
     elif button_data["status"] == "reserved":
-        create_popup_button(popup, "Открыть кабинку", start_session, bg_color="#3AA655")
-        create_popup_button(popup, "Изменить время брони", edit_reservation, bg_color="#FFA500")
-        create_popup_button(popup, "Отменить резерв", cancel_reservation, bg_color="#FFA500")
-        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5")
-
-    update_session_info()
-
-    # Center the popup
-    popup.update_idletasks()
-    popup_width = popup.winfo_width()
-    popup_height = popup.winfo_height()
-    x = (window.winfo_screenwidth() // 2) - (popup_width // 2)
-    y = (window.winfo_screenheight() // 2) - (popup_height // 2)
-    popup.geometry(f"{popup_width}x{popup_height}+{x}+{y}")
+        create_popup_button(popup, "Изменить время брони", change_reservation,bg_color="#4682B4", width=200, height=50)
+        create_popup_button(popup, "Занять", start_session, bg_color="#3AA655", width=200, height=50)
+        create_popup_button(popup, "Отменить бронь", cancel_reservation, bg_color="#cf2400", width=200, height=50)
+        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5", width=200, height=50)
+    popup.mainloop()
 
 ###############################################################################
-# Create the main cabin buttons on the canvas
+# Main cabin layout
 ###############################################################################
-button_defs = [
-    {"text": "Кабинка №1", "status": "vacant", "size": "normal", "start_time": None},
-    {"text": "Кабинка №2", "status": "vacant", "size": "normal", "start_time": None},
-    {"text": "Кабинка №3", "status": "vacant", "size": "normal", "start_time": None},
-    {"text": "Кабинка №4", "status": "vacant", "size": "normal", "start_time": None},
-    {"text": "Кабинка №5", "status": "vacant", "size": "normal", "start_time": None},
-    {"text": "Кабинка №6", "status": "vacant", "size": "normal", "start_time": None},
-    {"text": "Кабинка №7", "status": "vacant", "size": "normal", "start_time": None},
-    {"text": "Кабинка №8", "status": "vacant", "size": "normal", "start_time": None},
-    {"text": "VIP-Кабинка 1", "status": "vacant", "size": "large", "start_time": None},
-    {"text": "VIP-Кабинка 2", "status": "vacant", "size": "large", "start_time": None}
-]
-
 button_width, button_height = 180, 70
 vip_width, vip_height = 380, 70
 x_start, y_start = 100, 250
 x_spacing, y_spacing = 200, 100
+
+button_defs = [
+    {"text": f"Кабинка {i+1}", "status": "vacant", "size": "normal"} for i in range(7)
+] + [
+    {"text": f"VIP Кабинка {i+1}", "status": "vacant", "size": "vip"} for i in range(2)
+]
 
 for i, button_data in enumerate(button_defs):
     buttons.append(button_data)
@@ -741,9 +825,9 @@ for i, button_data in enumerate(button_defs):
         x2 = x1 + button_width
         y2 = y1 + button_height
     else:
-        col = i % 2
+        col = 1 - (i - 8) % 2  # Reverse the column logic for VIP cabins
         x1 = x_start + col * (vip_width + 20)
-        y1 = y_start + 2 * y_spacing  # Place VIP cabins further down
+        y1 = y_start + 2 * y_spacing
         x2 = x1 + vip_width
         y2 = y1 + vip_height
 
@@ -764,7 +848,6 @@ for i, button_data in enumerate(button_defs):
         fill="#FFFFFF",
         font=("Arial", 16, "bold")
     )
-    # Bind to open the cabin popup
     canvas.tag_bind(b_id, "<Button-1>", lambda e, b=button_data: open_room_popup(b))
     canvas.tag_bind(text_id, "<Button-1>", lambda e, b=button_data: open_room_popup(b))
 
@@ -781,15 +864,15 @@ def exit_and_save():
         if not answer:
             return
         forcibly_close_all_rooms()
-        if session_data:
-            save_session_data()
-            session_data.clear()
-        window.destroy()
-    else:
-        if session_data:
-            save_session_data()
-            session_data.clear()
-        window.destroy()
+    if session_data:
+        save_session_data()
+        session_data.clear()
+    try:
+        ngrok.kill()  # Ensure the Ngrok tunnel is closed
+    except Exception as e:
+        print(f"Error closing Ngrok tunnel: {e}")
+    window.destroy()
+
 
 exit_button_id = create_rounded_rectangle(canvas, 375, 720, 575, 790, radius=15, color="#F725E5")
 exit_text_id = canvas.create_text(
@@ -814,22 +897,98 @@ def on_close():
         if not answer:
             return
         forcibly_close_all_rooms()
-        if session_data:
+    if session_data:
+        answer = messagebox.askyesno(
+            "Сохранить данные",
+            "Есть несохранённые данные. Сохранить перед выходом?"
+        )
+        if answer:
             save_session_data()
             session_data.clear()
-        window.destroy()
-    else:
-        if session_data:
-            answer = messagebox.askyesno(
-                "Сохранить данные",
-                "Есть несохранённые данные. Сохранить перед выходом?"
-            )
-            if answer:
-                save_session_data()
-                session_data.clear()
-        window.destroy()
-
+    try:
+        ngrok.kill()  # Ensure the Ngrok tunnel is closed
+    except Exception as e:
+        print(f"Error closing Ngrok tunnel: {e}")
+    window.destroy()
 window.protocol("WM_DELETE_WINDOW", on_close)
+# Start the Flask thread
+flask_thread = threading.Thread(target=app.run, kwargs={"port":5050, "use_reloader":False}, daemon=True)
+flask_thread.start()
+
+
+try:
+    ngrok.kill()  # closes any pre-existing ngrok processes for this user
+    # Use the custom domain
+    public_url = ngrok.connect(5050, domain="gator-dynamic-usually.ngrok-free.app").public_url
+    print(f"Public URL: {public_url}")
+    web_status_label.config(text="Web: ON", bg="green")
+except Exception as err:
+    # If ngrok fails (no internet, cert error, etc.) just keep running locally
+    print("Ngrok error:", err)
+    web_status_label.config(text="Web: LOCAL", bg="orange")
+    public_url = "local only"
+
+# Function to check and reconnect the Ngrok tunnel
+def is_internet_connected():
+    """Check if the internet connection is active."""
+    try:
+        # Attempt to connect to a reliable host (Google's public DNS server)
+        socket.create_connection(("8.8.8.8", 53), timeout=3)
+        return True
+    except OSError:
+        return False
+
+def check_and_reconnect_tunnel():
+    global public_url
+
+    def perform_check():
+        try:
+            # Check if the internet connection is active
+            if not is_internet_connected():
+                print("No internet connection detected.")
+                web_status_label.config(text="Web: LOCAL", bg="orange")
+                raise Exception("No internet connection.")
+
+            # Check if the current tunnel is active
+            tunnels = ngrok.get_tunnels()
+            if tunnels:
+                for tunnel in tunnels:
+                    if tunnel.public_url == "https://gator-dynamic-usually.ngrok-free.app":
+                        print("Ngrok tunnel is active.")
+                        web_status_label.config(text="Web: ON", bg="green")
+                        return  # Exit the function if the tunnel is active
+                else:
+                    # If no active tunnel matches the reserved domain, reconnect
+                    raise Exception("No active tunnel matches the reserved domain.")
+            else:
+                raise Exception("No tunnels found.")
+        except Exception as e:
+            print(f"Ngrok tunnel check failed: {e}")
+            web_status_label.config(text="Web: LOCAL", bg="orange")
+            try:
+                print("Killing any existing Ngrok tunnels...")
+                ngrok.kill()  # Kill any existing tunnels
+                time.sleep(2)  # Wait for the process to terminate
+            except Exception as kill_error:
+                print(f"Error killing Ngrok tunnel: {kill_error}")
+            # Reconnect to Ngrok using the reserved domain
+            try:
+                public_url = ngrok.connect(5050, domain="gator-dynamic-usually.ngrok-free.app").public_url
+                print(f"Reconnected to Ngrok. Public URL: {public_url}")
+                web_status_label.config(text="Web: ON", bg="green")
+            except Exception as reconnect_error:
+                print(f"Failed to reconnect to Ngrok: {reconnect_error}")
+                web_status_label.config(text="Web: LOCAL", bg="orange")
+                public_url = "local only"
+        finally:
+            # Ensure the function is rescheduled
+            window.after(30000, check_and_reconnect_tunnel)
+
+    # Run the check in a separate thread
+    threading.Thread(target=perform_check, daemon=True).start()
+
+# Start the periodic check
+check_and_reconnect_tunnel()
 
 window.update_idletasks()
 window.geometry("950x850")
