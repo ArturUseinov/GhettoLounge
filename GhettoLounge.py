@@ -9,7 +9,7 @@ from flask import Flask, render_template_string
 import threading
 from pyngrok import ngrok
 from pyngrok import conf 
-conf.get_default().auth_token = "2xJtu8riUlPkYfJ4KEhdheRKOBu_TMa1SCZAP9rCJdqiGSVs"
+conf.get_default().auth_token = "AUTH_TOKEN"  
 
 from datetime import datetime, timedelta
 
