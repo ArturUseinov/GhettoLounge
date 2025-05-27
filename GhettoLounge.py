@@ -1,4 +1,4 @@
-from tkinter import Tk, Canvas, Toplevel, Label, Frame, Entry, StringVar, IntVar, Spinbox, Listbox, SINGLE
+from tkinter import Tk, Canvas, Toplevel, Label, Frame, Entry, StringVar, IntVar, Spinbox, Listbox, SINGLE, TclError
 from tkinter import messagebox
 from PIL import Image, ImageTk
 import time
@@ -9,14 +9,14 @@ from flask import Flask, render_template_string
 import threading
 from pyngrok import ngrok
 from pyngrok import conf 
-conf.get_default().auth_token = "AUTH_TOKEN"
+conf.get_default().auth_token = "2xJtu8riUlPkYfJ4KEhdheRKOBu_TMa1SCZAP9rCJdqiGSVs"
 
 from datetime import datetime, timedelta
 
 # Initialize the main window
 window = Tk()
 window.title("Ghetto Lounge Management System")
-window.geometry("950x850")  # Set the desired size explicitly
+
 window.configure(bg="#000000")  # Set background color
 
 # Set minimum window size
@@ -24,7 +24,15 @@ window.minsize(950, 850)
 
 # Add a canvas to draw elements
 canvas = Canvas(window, bg="#000000", bd=0, highlightthickness=0)
-canvas.place(x=0, y=0, relwidth=1, relheight=1)  # Fill the entire window
+
+CANVAS_W = 950    
+OFF = 50          # horizontal shift to neutralise the old left margin
+      
+
+canvas.place(relx=0.5, y=0, anchor='n',   # centred horizontally
+             width=CANVAS_W,              # fixed design width
+             relheight=1)                 # still stretches vertically
+
 
 # Helper function to create rounded rectangles
 def create_rounded_rectangle(canvas, x1, y1, x2, y2, radius=20, color="#FFFFFF"):
@@ -51,6 +59,19 @@ def create_rounded_rectangle(canvas, x1, y1, x2, y2, radius=20, color="#FFFFFF")
         x1, y1,
     ]
     return canvas.create_polygon(points, smooth=True, fill=color, outline="")
+
+def center_window(win, w=None, h=None):
+    """Center *win* on the primary screen."""
+    win.update_idletasks()                     # ←   make sure geometry is current
+    if w is None or h is None:                
+        w = w or win.winfo_width()
+        h = h or win.winfo_height()
+    sw = win.winfo_screenwidth()
+    sh = win.winfo_screenheight()
+    x  = (sw - w) // 2
+    y  = (sh - h) // 2
+    win.geometry(f"{w}x{h}+{x}+{y}")
+
 
 # Function to create styled popup buttons
 def create_popup_button(parent, text, command, bg_color="#F725E5", fg_color="#FFFFFF", width=300, height=50):
@@ -79,7 +100,7 @@ try:
     logo_image = Image.open(logo_path)
     logo_image = logo_image.resize((150, 150), Image.LANCZOS)
     logo = ImageTk.PhotoImage(logo_image)
-    canvas.create_image(50, 30, image=logo, anchor="nw")  # Place the logo
+    canvas.create_image(OFF, 30, image=logo, anchor="nw")  # Place the logo
 except FileNotFoundError:
     print("Logo image not found. Please check the path.")
 
@@ -396,12 +417,7 @@ def add_extra_service(parent_window, button_data):
     create_popup_button(service_popup, "Добавить", add_service_action, bg_color="#3AA655")
 
     # Center on screen
-    service_popup.update_idletasks()
-    sw = service_popup.winfo_width()
-    sh = service_popup.winfo_height()
-    sx = (window.winfo_screenwidth() // 2) - (sw // 2)
-    sy = (window.winfo_screenheight() // 2) - (sh // 2)
-    service_popup.geometry(f"{sw}x{sh}+{sx}+{sy}")
+    center_window(service_popup)
 
 ###############################################################################
 # Pop-up #2: "Убрать из заказа"
@@ -456,15 +472,10 @@ def remove_extra_service(parent_window, button_data):
                             f"Удалено {removed_count} записей услуги '{name}' (стоимость {cost}).")
         remove_popup.destroy()
 
-    create_popup_button(remove_popup, "Удалить", remove_selected, bg_color="#cf2400", width=200, height=40)
+    create_popup_button(remove_popup, "Удалить", remove_selected, bg_color="#cf2400", width=240, height=40)
 
     # Center on screen
-    remove_popup.update_idletasks()
-    rw = remove_popup.winfo_width()
-    rh = remove_popup.winfo_height()
-    rx = (window.winfo_screenwidth() // 2) - (rw // 2)
-    ry = (window.winfo_screenheight() // 2) - (rh // 2)
-    remove_popup.geometry(f"{rw}x{rh}+{rx}+{ry}")
+    center_window(remove_popup)
 
 ###############################################################################
 # Pop-up #3: "Выбор времени брони" (with optional comment)
@@ -520,12 +531,21 @@ def pick_reservation_time(parent_window, initial_time=None, initial_comment=""):
     selected_data = [None, None]  # [time_string, comment_string]
 
     def confirm_time():
-        hh = hour_var.get()
-        mm = minute_var.get()
+        try:
+            hh = int(hour_var.get())
+            mm = int(minute_var.get())
+        except (ValueError, TclError):
+            messagebox.showerror("Ошибка", "Введите корректный час и минуту (0-23 / 0-59).")
+            return
+
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            messagebox.showerror("Ошибка", "Часы 0-23, минуты 0-59.")
+            return
+
         selected_data[0] = f"{hh:02d}:{mm:02d}"
         selected_data[1] = comment_var.get().strip()
         time_popup.destroy()
-
+        
     def cancel_time():
         time_popup.destroy()
 
@@ -536,12 +556,7 @@ def pick_reservation_time(parent_window, initial_time=None, initial_comment=""):
     create_popup_button(button_frame, "Отмена", cancel_time, bg_color="#F725E5", width=100, height=40)
 
     # Center on screen
-    time_popup.update_idletasks()
-    w = time_popup.winfo_width()
-    h = time_popup.winfo_height()
-    x = (window.winfo_screenwidth() // 2) - (w // 2)
-    y = (window.winfo_screenheight() // 2) - (h // 2)
-    time_popup.geometry(f"{w}x{h}+{x}+{y}")
+    center_window(time_popup)
 
     time_popup.wait_window()
 
@@ -555,7 +570,9 @@ def open_room_popup(button_data):
     popup = Toplevel(window)
     popup.title(button_data["text"])
     popup.configure(bg="#1C1C1C")
-    popup.geometry("400x600+275+275")
+    popup.geometry("400x600")     
+    center_window(popup)          
+
 
     rate = 80000 if "VIP" in button_data["text"] else 50000
 
@@ -575,6 +592,8 @@ def open_room_popup(button_data):
 
     # Live-update loop
     def update_session_info():
+        if not popup.winfo_exists():      # window was closed → stop refreshing
+            return
         if button_data["status"] == "occupied":
             elapsed = time.time() - button_data["start_time"]
             h, rem  = divmod(elapsed, 3600)
@@ -595,6 +614,7 @@ def open_room_popup(button_data):
             else:
                 extra_services_label.config(text="Доп. услуги: нет")
             reservation_comment.config(text="")
+            
         elif button_data["status"] == "reserved":
             session_time_label.config(
                 text=f"Зарезервировано на: {button_data.get('reservation_time','')}")
@@ -729,12 +749,7 @@ def open_room_popup(button_data):
         create_popup_button(billing_window, "ОК", close_billing_window, bg_color="#F725E5")
 
         # Center billing window
-        billing_window.update_idletasks()
-        bw = billing_window.winfo_width()
-        bh = billing_window.winfo_height()
-        bx = (window.winfo_screenwidth() // 2) - (bw // 2)
-        by = (window.winfo_screenheight() // 2) - (bh // 2)
-        billing_window.geometry(f"{bw}x{bh}+{bx}+{by}")
+        center_window(billing_window)
 
     def reserve_session():
         if button_data["status"] == "occupied":
@@ -786,31 +801,31 @@ def open_room_popup(button_data):
 
     # Create the relevant buttons for each state
     if button_data["status"] == "vacant":
-        create_popup_button(popup, "Открыть кабинку", start_session, bg_color="#3AA655", fg_color="#FFFFFF", width=200, height=50)
-        create_popup_button(popup, "Забронировать", reserve_session, bg_color="#FFD700", fg_color="#000000", width=200, height=50)
-        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5", width=200, height=50)
+        create_popup_button(popup, "Открыть кабинку", start_session, bg_color="#3AA655", fg_color="#FFFFFF", width=240, height=50)
+        create_popup_button(popup, "Забронировать", reserve_session, bg_color="#FFD700", fg_color="#000000", width=240, height=50)
+        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5", width=240, height=50)
     elif button_data["status"] == "occupied":
-        create_popup_button(popup, "Добавить услугу", lambda b=button_data: add_extra_service(popup, b), bg_color="#3AA655", width=200, height=50)
-        create_popup_button(popup, "Убрать услугу", lambda b=button_data: remove_extra_service(popup, b), bg_color="#cf2400", width=200, height=50)
-        create_popup_button(popup, "Закрыть кабинку", close_session, bg_color="#F725E5", width=200, height=50)
-        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5", width=200, height=50)
+        create_popup_button(popup, "Добавить услугу", lambda b=button_data: add_extra_service(popup, b), bg_color="#3AA655", width=240, height=50)
+        create_popup_button(popup, "Убрать услугу", lambda b=button_data: remove_extra_service(popup, b), bg_color="#cf2400", width=240, height=50)
+        create_popup_button(popup, "Закрыть кабинку", close_session, bg_color="#F725E5", width=240, height=50)
+        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5", width=240, height=50)
     elif button_data["status"] == "reserved":
-        create_popup_button(popup, "Изменить время брони", change_reservation,bg_color="#4682B4", width=200, height=50)
-        create_popup_button(popup, "Занять", start_session, bg_color="#3AA655", width=200, height=50)
-        create_popup_button(popup, "Отменить бронь", cancel_reservation, bg_color="#cf2400", width=200, height=50)
-        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5", width=200, height=50)
-    popup.mainloop()
+        create_popup_button(popup, "Изменить время брони", change_reservation,bg_color="#4682B4", width=240, height=50)
+        create_popup_button(popup, "Занять", start_session, bg_color="#3AA655", width=240, height=50)
+        create_popup_button(popup, "Отменить бронь", cancel_reservation, bg_color="#cf2400", width=240, height=50)
+        create_popup_button(popup, "Назад", go_back, bg_color="#F725E5", width=240, height=50)
+        popup.grab_set()
 
 ###############################################################################
 # Main cabin layout
 ###############################################################################
 button_width, button_height = 180, 70
 vip_width, vip_height = 380, 70
-x_start, y_start = 100, 250
+x_start, y_start = 100 - OFF, 250
 x_spacing, y_spacing = 200, 100
 
 button_defs = [
-    {"text": f"Кабинка {i+1}", "status": "vacant", "size": "normal"} for i in range(7)
+    {"text": f"Кабинка {i+1}", "status": "vacant", "size": "normal"} for i in range(8)
 ] + [
     {"text": f"VIP Кабинка {i+1}", "status": "vacant", "size": "vip"} for i in range(2)
 ]
@@ -938,58 +953,58 @@ def is_internet_connected():
     except OSError:
         return False
 
+# ------------------------------------------------------------------
+# Ngrok watchdog ---------------------------------------------------
+# ------------------------------------------------------------------
 def check_and_reconnect_tunnel():
+    # """Launch a single background thread that checks the tunnel forever."""
     global public_url
 
     def perform_check():
         try:
-            # Check if the internet connection is active
+            # 1) Internet up?
             if not is_internet_connected():
-                print("No internet connection detected.")
-                web_status_label.config(text="Web: LOCAL", bg="orange")
-                raise Exception("No internet connection.")
+                raise RuntimeError("No internet connection.")
 
-            # Check if the current tunnel is active
-            tunnels = ngrok.get_tunnels()
-            if tunnels:
-                for tunnel in tunnels:
-                    if tunnel.public_url == "https://gator-dynamic-usually.ngrok-free.app":
-                        print("Ngrok tunnel is active.")
-                        web_status_label.config(text="Web: ON", bg="green")
-                        return  # Exit the function if the tunnel is active
-                else:
-                    # If no active tunnel matches the reserved domain, reconnect
-                    raise Exception("No active tunnel matches the reserved domain.")
-            else:
-                raise Exception("No tunnels found.")
+            # 2) Is the reserved-domain tunnel alive?
+            for t in ngrok.get_tunnels():
+                if t.public_url == "https://gator-dynamic-usually.ngrok-free.app":
+                    web_status_label.config(text="Web: ON", bg="green")
+                    return                       # <- all good, nothing to do
+
+            raise RuntimeError("Reserved tunnel not found.")  # -> reconnect
+
         except Exception as e:
-            print(f"Ngrok tunnel check failed: {e}")
+            print(f"Ngrok check failed: {e}")
             web_status_label.config(text="Web: LOCAL", bg="orange")
+
             try:
-                print("Killing any existing Ngrok tunnels...")
-                ngrok.kill()  # Kill any existing tunnels
-                time.sleep(2)  # Wait for the process to terminate
-            except Exception as kill_error:
-                print(f"Error killing Ngrok tunnel: {kill_error}")
-            # Reconnect to Ngrok using the reserved domain
+                ngrok.kill()                     # nuke any leftovers
+                time.sleep(2)
+            except Exception as kill_err:
+                print(f"Ngrok kill error: {kill_err}")
+
             try:
-                public_url = ngrok.connect(5050, domain="gator-dynamic-usually.ngrok-free.app").public_url
-                print(f"Reconnected to Ngrok. Public URL: {public_url}")
+                public_url = ngrok.connect(
+                    5050,
+                    domain="gator-dynamic-usually.ngrok-free.app"
+                ).public_url
+                print(f"Re-connected: {public_url}")
                 web_status_label.config(text="Web: ON", bg="green")
-            except Exception as reconnect_error:
-                print(f"Failed to reconnect to Ngrok: {reconnect_error}")
-                web_status_label.config(text="Web: LOCAL", bg="orange")
+            except Exception as rec_err:
+                print(f"Reconnect failed: {rec_err}")
                 public_url = "local only"
-        finally:
-            # Ensure the function is rescheduled
-            window.after(30000, check_and_reconnect_tunnel)
 
-    # Run the check in a separate thread
-    threading.Thread(target=perform_check, daemon=True).start()
+    # ------------------- watchdog loop ----------------------------
+    def watchdog():
+        while True:
+            perform_check()
+            time.sleep(30)       # wait 30 s before next check
 
-# Start the periodic check
+    threading.Thread(target=watchdog, daemon=True).start()
+
+# kick it off once at startup
 check_and_reconnect_tunnel()
 
-window.update_idletasks()
-window.geometry("950x850")
+center_window(window, 950, 850)
 window.mainloop()
