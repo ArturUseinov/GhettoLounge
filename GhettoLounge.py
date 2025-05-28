@@ -9,7 +9,7 @@ from flask import Flask, render_template_string
 import threading
 from pyngrok import ngrok
 from pyngrok import conf 
-conf.get_default().auth_token = "AUTH_TOKEN"  
+conf.get_default().auth_token = "AUTH_TOKEN"  # Replace with your ngrok auth token
 
 from datetime import datetime, timedelta
 
@@ -840,7 +840,7 @@ for i, button_data in enumerate(button_defs):
         x2 = x1 + button_width
         y2 = y1 + button_height
     else:
-        col = 1 - (i - 8) % 2  # Reverse the column logic for VIP cabins
+        col = (i - 8) % 2  
         x1 = x_start + col * (vip_width + 20)
         y1 = y_start + 2 * y_spacing
         x2 = x1 + vip_width
