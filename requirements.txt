@@ -21,4 +21,4 @@ setuptools==75.6.0
 urllib3==1.26.6
 Flask==3.1.1
 pyngrok>=7.0
-pywin32>=306 ; sys_platform == "win32"   # only install on Windows
+pywin32>=306 ; platform_system=="Windows"  # only install on Windows

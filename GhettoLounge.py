@@ -10,13 +10,20 @@ import threading
 from pyngrok import ngrok
 from pyngrok import conf 
 conf.get_default().auth_token = "AUTH_TOKEN"  # Replace with your ngrok auth token
-import ctypes, sys
+import sys
 if sys.platform == "win32":
-    import win32con, win32gui
-    hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-    if hwnd:                                     # running under python.exe
-        hmenu = win32gui.GetSystemMenu(hwnd, False)
-        win32gui.DeleteMenu(hmenu, win32con.SC_CLOSE, win32con.MF_BYCOMMAND)
+    try:
+        import ctypes, win32con, win32gui     # pywin32 must be installed
+        hwnd  = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            hMenu = win32gui.GetSystemMenu(hwnd, False)
+            if hMenu:                         # ← guard against Windows Terminal etc.
+                win32gui.DeleteMenu(hMenu,
+                                   win32con.SC_CLOSE,
+                                   win32con.MF_BYCOMMAND)
+    except Exception as err:
+        print("Console-close disabling failed:", err)
+
 from datetime import datetime, timedelta
 
 # Initialize the main window
@@ -177,8 +184,10 @@ def index():
             room["start_time"] = start_time_str
             room["elapsed"] = f"{hours} ч {minutes} мин"
             rate = 80000 if "VIP" in b["text"] else 50000
-            cost = int(math.ceil(elapsed_sec / 900) * 0.25 * rate)
-            room["cost"] = cost
+            time_cost = int(math.ceil(elapsed_sec / 900) * 0.25 * rate)      # время
+            services_cost = sum(srv["Стоимость(сум)"]                         # доп-услуги
+                                for srv in b.get("extra_services", []))
+            room["cost"] = time_cost + services_cost                          # итог
             room["extra_services"] = b.get("extra_services", [])
         elif b["status"] == "reserved":
             room["reservation_time"] = b.get("reservation_time", "")
