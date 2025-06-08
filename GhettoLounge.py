@@ -11,18 +11,27 @@ from pyngrok import ngrok
 from pyngrok import conf 
 conf.get_default().auth_token = "AUTH_TOKEN"  # Replace with your ngrok auth token
 import sys
+
 if sys.platform == "win32":
     try:
-        import ctypes, win32con, win32gui     # pywin32 must be installed
-        hwnd  = ctypes.windll.kernel32.GetConsoleWindow()
+        import ctypes
+        import win32con
+        import win32gui          # ← requires pywin32
+
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
         if hwnd:
             hMenu = win32gui.GetSystemMenu(hwnd, False)
-            if hMenu:                         # ← guard against Windows Terminal etc.
-                win32gui.DeleteMenu(hMenu,
-                                   win32con.SC_CLOSE,
-                                   win32con.MF_BYCOMMAND)
+            if hMenu:            # guard against Windows Terminal, etc.
+                win32gui.DeleteMenu(
+                    hMenu,
+                    win32con.SC_CLOSE,
+                    win32con.MF_BYCOMMAND
+                )
+                win32gui.DrawMenuBar(hwnd)     # refresh the title-bar
     except Exception as err:
+        # don’t crash if pywin32 is missing or console host is different
         print("Console-close disabling failed:", err)
+
 
 from datetime import datetime, timedelta
 
