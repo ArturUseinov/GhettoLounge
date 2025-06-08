@@ -10,7 +10,13 @@ import threading
 from pyngrok import ngrok
 from pyngrok import conf 
 conf.get_default().auth_token = "AUTH_TOKEN"  # Replace with your ngrok auth token
-
+import ctypes, sys
+if sys.platform == "win32":
+    import win32con, win32gui
+    hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+    if hwnd:                                     # running under python.exe
+        hmenu = win32gui.GetSystemMenu(hwnd, False)
+        win32gui.DeleteMenu(hmenu, win32con.SC_CLOSE, win32con.MF_BYCOMMAND)
 from datetime import datetime, timedelta
 
 # Initialize the main window
