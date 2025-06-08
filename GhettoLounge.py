@@ -15,43 +15,22 @@ import sys
 if sys.platform == "win32":
     import ctypes
 
-    # --- Win32 constants -----------------------------------------------------
-    CTRL_C_EVENT        = 0        # not used here
-    CTRL_BREAK_EVENT    = 1
-    CTRL_CLOSE_EVENT    = 2        # user clicked the X, or Alt-F4 on console
-    CTRL_LOGOFF_EVENT   = 5
-    CTRL_SHUTDOWN_EVENT = 6
-
-    # Handler signature: BOOL WINAPI HandlerRoutine( DWORD dwCtrlType )
-    HandlerRoutine = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+    CTRL_CLOSE_EVENT = 2
+    HandlerRoutine   = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
 
     def _console_ctrl_handler(ctrl_type: int) -> bool:
-        """
-        Intercept attempts to close the console window.
-
-        Return True  -> we handled it, **do not** close.
-        Return False -> propagate to default handler (process exits).
-        """
         if ctrl_type == CTRL_CLOSE_EVENT:
-            # Nicest way is to post a message to your Tk app instead of a
-            # blocking message-box, but for demo purposes a simple box works:
             ctypes.windll.user32.MessageBoxW(
                 0,
                 "Пожалуйста, закройте программу\nчерез кнопку 'Выйти и сохранить'.",
                 "Не закрывайте консоль!",
-                0x00000040 | 0x00000001          # MB_ICONWARNING | MB_OK
+                0x00000040 | 0x00000001   # MB_ICONWARNING | MB_OK
             )
-            return True        # <- swallow the close request
-        # You can also trap shutdown / log-off and save data here
-        return False           # any other control events -> default handling
+            return True      # tell Windows: “I handled it – don’t exit”
+        return False         # everything else → default behaviour
 
-    # register the handler
-    ctypes.windll.kernel32.SetConsoleCtrlHandler(
-        HandlerRoutine(_console_ctrl_handler),  # function pointer
-        True                                    # add
-    )
-
-
+    _KEEP_ALIVE = HandlerRoutine(_console_ctrl_handler)   # ←  **NEW**
+    ctypes.windll.kernel32.SetConsoleCtrlHandler(_KEEP_ALIVE, True)
 
 from datetime import datetime, timedelta
 
