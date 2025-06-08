@@ -12,6 +12,27 @@ from pyngrok import conf
 conf.get_default().auth_token = "AUTH_TOKEN"  # Replace with your ngrok auth token
 from datetime import datetime, timedelta
 
+# --- hide the ngrok console on Windows -------------------------------------
+import sys, subprocess
+if sys.platform == "win32":
+    from pyngrok.process import _NgrokProcess         # internal class
+    _orig_spawn = _NgrokProcess._spawn                # keep original
+
+    def _spawn_no_console(self):                      # our replacement
+        creationflags = subprocess.CREATE_NO_WINDOW
+        return subprocess.Popen(
+            self.command,
+            bufsize=1,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            creationflags=creationflags               # <- HIDE WINDOW
+        )
+
+    _NgrokProcess._spawn = _spawn_no_console        
+# ---------------------------------------------------------------------------
+
+
 # Initialize the main window
 window = Tk()
 window.title("Ghetto Lounge Management System")
