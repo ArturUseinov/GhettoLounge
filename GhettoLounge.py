@@ -13,24 +13,44 @@ conf.get_default().auth_token = "AUTH_TOKEN"  # Replace with your ngrok auth tok
 import sys
 
 if sys.platform == "win32":
-    try:
-        import ctypes
-        import win32con
-        import win32gui          # ← requires pywin32
+    import ctypes
 
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-        if hwnd:
-            hMenu = win32gui.GetSystemMenu(hwnd, False)
-            if hMenu:            # guard against Windows Terminal, etc.
-                win32gui.DeleteMenu(
-                    hMenu,
-                    win32con.SC_CLOSE,
-                    win32con.MF_BYCOMMAND
-                )
-                win32gui.DrawMenuBar(hwnd)     # refresh the title-bar
-    except Exception as err:
-        # don’t crash if pywin32 is missing or console host is different
-        print("Console-close disabling failed:", err)
+    # --- Win32 constants -----------------------------------------------------
+    CTRL_C_EVENT        = 0        # not used here
+    CTRL_BREAK_EVENT    = 1
+    CTRL_CLOSE_EVENT    = 2        # user clicked the X, or Alt-F4 on console
+    CTRL_LOGOFF_EVENT   = 5
+    CTRL_SHUTDOWN_EVENT = 6
+
+    # Handler signature: BOOL WINAPI HandlerRoutine( DWORD dwCtrlType )
+    HandlerRoutine = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+
+    def _console_ctrl_handler(ctrl_type: int) -> bool:
+        """
+        Intercept attempts to close the console window.
+
+        Return True  -> we handled it, **do not** close.
+        Return False -> propagate to default handler (process exits).
+        """
+        if ctrl_type == CTRL_CLOSE_EVENT:
+            # Nicest way is to post a message to your Tk app instead of a
+            # blocking message-box, but for demo purposes a simple box works:
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "Пожалуйста, закройте программу\nчерез кнопку 'Выйти и сохранить'.",
+                "Не закрывайте консоль!",
+                0x00000040 | 0x00000001          # MB_ICONWARNING | MB_OK
+            )
+            return True        # <- swallow the close request
+        # You can also trap shutdown / log-off and save data here
+        return False           # any other control events -> default handling
+
+    # register the handler
+    ctypes.windll.kernel32.SetConsoleCtrlHandler(
+        HandlerRoutine(_console_ctrl_handler),  # function pointer
+        True                                    # add
+    )
+
 
 
 from datetime import datetime, timedelta
