@@ -10,28 +10,6 @@ import threading
 from pyngrok import ngrok
 from pyngrok import conf 
 conf.get_default().auth_token = "AUTH_TOKEN"  # Replace with your ngrok auth token
-import sys
-
-if sys.platform == "win32":
-    import ctypes
-
-    CTRL_CLOSE_EVENT = 2
-    HandlerRoutine   = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
-
-    def _console_ctrl_handler(ctrl_type: int) -> bool:
-        if ctrl_type == CTRL_CLOSE_EVENT:
-            ctypes.windll.user32.MessageBoxW(
-                0,
-                "Пожалуйста, закройте программу\nчерез кнопку 'Выйти и сохранить'.",
-                "Не закрывайте консоль!",
-                0x00000040 | 0x00000001   # MB_ICONWARNING | MB_OK
-            )
-            return True      # tell Windows: “I handled it – don’t exit”
-        return False         # everything else → default behaviour
-
-    _KEEP_ALIVE = HandlerRoutine(_console_ctrl_handler)   # ←  **NEW**
-    ctypes.windll.kernel32.SetConsoleCtrlHandler(_KEEP_ALIVE, True)
-
 from datetime import datetime, timedelta
 
 # Initialize the main window
